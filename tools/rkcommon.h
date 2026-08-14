@@ -81,6 +81,14 @@ void rkcommon_print_header(const void *buf, struct image_tool_params *params);
 bool rkcommon_need_rc4_spl(struct image_tool_params *params);
 
 /**
+ * rkcommon_is_signed() - check if secure-boot signing was requested
+ *
+ * Signing is opt-in via the --rk-key option and is only implemented
+ * for the v1-header SoCs (rk3399 family).
+ */
+bool rkcommon_is_signed(struct image_tool_params *params);
+
+/**
  * rkcommon_rc4_encode_spl() - encode the spl binary
  *
  * Encrypts the SPL binary using the generic rc4 key as required

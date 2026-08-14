@@ -14,6 +14,12 @@
 #include <rc4.h>
 #include "mkimage.h"
 #include "rkcommon.h"
+#if CONFIG_IS_ENABLED(LIBCRYPTO)
+#include <openssl/bn.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/rsa.h>
+#endif
 
 enum {
 	RK_MAGIC		= 0x0ff0aa55,
@@ -23,6 +29,33 @@ enum {
 enum {
 	RK_HEADER_V1	= 1,
 	RK_HEADER_V2	= 2,
+};
+
+/*
+ * Secure-boot (signed) idblock constants, from the RK3399 BootROM's
+ * rump_roast()/rsa_verify() code paths and the rk_sign_tool output format:
+ *
+ * The payload (at init_offset * 512 = 0x800) starts with an 0x800-byte
+ * "RSAK" block containing the public key, the RSA signature and the
+ * SHA256 hashes of the "init" (TPL) and "boot" (SPL) stages.
+ */
+enum {
+	RK_RSAK_HDR_START	= RK_SPL_HDR_START,	/* 0x800 */
+	RK_RSAK_SIZE		= 0x800,
+	RK_SIGNED_HDR_SIZE	= RK_SPL_HDR_START + RK_RSAK_SIZE, /* 0x1000 */
+	RK_RSAK_FLAGS_OFF	= 0x08,
+	RK_RSAK_LEN_OFF		= 0x0c,
+	RK_RSAK_KEY_OFF		= 0x20,	/* modulus (0x100) + e + pad */
+	RK_RSAK_KEY_SIZE	= 0x200,
+	RK_RSAK_EXP_OFF		= 0x120,	/* exponent slot */
+	RK_RSAK_SIG_OFF		= 0x220,
+	RK_RSAK_SIG_SIZE	= 0x100,
+	RK_RSAK_HASH1_OFF	= 0x320,
+	RK_RSAK_HASH2_OFF	= 0x344,
+	RK_RSAK_MSG_OFF		= 0x368,	/* RSA message (raw, no padding) */
+	RK_RSAK_MSG_SIZE	= 0x100,
+	RK_RSAK_FLAGS		= 0x323,
+	RK_RSAK_DATA_LEN	= 0xda,	/* in 4-byte words: covers 0..0x368 */
 };
 
 enum hash_type {
@@ -175,6 +208,230 @@ struct spl_params {
 
 static struct spl_params spl_params = { 0 };
 
+#if CONFIG_IS_ENABLED(LIBCRYPTO)
+static uint8_t *rk_signed_read_file(struct image_tool_params *params,
+				    const char *fname, size_t *sizep)
+{
+	struct stat sbuf;
+	uint8_t *buf;
+	int fd, ret;
+
+	fd = open(fname, O_RDONLY | O_BINARY);
+	if (fd < 0) {
+		fprintf(stderr, "%s: Can't open %s: %s\n",
+			params->cmdname, fname, strerror(errno));
+		return NULL;
+	}
+	if (fstat(fd, &sbuf) < 0) {
+		fprintf(stderr, "%s: Can't stat %s: %s\n",
+			params->cmdname, fname, strerror(errno));
+		close(fd);
+		return NULL;
+	}
+	buf = malloc(sbuf.st_size);
+	if (!buf) {
+		fprintf(stderr, "%s: Out of memory reading %s\n",
+			params->cmdname, fname);
+		close(fd);
+		return NULL;
+	}
+	ret = read(fd, buf, sbuf.st_size);
+	close(fd);
+	if (ret != sbuf.st_size) {
+		fprintf(stderr, "%s: Can't read %s\n", params->cmdname, fname);
+		free(buf);
+		return NULL;
+	}
+	*sizep = sbuf.st_size;
+
+	return buf;
+}
+
+static int rk_sha256(const void *data, size_t len, uint8_t *out)
+{
+	size_t outlen = 0;
+
+	if (EVP_Q_digest(NULL, "SHA256", NULL, data, len, out, &outlen) != 1)
+		return -1;
+
+	return 0;
+}
+
+/*
+ * Load the RSA private key and store its modulus big-endian into `modulus`
+ * (must be 256 bytes for RSA-2048).
+ */
+static EVP_PKEY *rk_signed_load_key(struct image_tool_params *params,
+				    uint8_t *modulus)
+{
+	BIGNUM *n = NULL;
+	EVP_PKEY *pkey;
+	FILE *f;
+	int i;
+
+	f = fopen(params->rk_key_file, "rb");
+	if (!f) {
+		fprintf(stderr, "%s: Can't open key %s: %s\n",
+			params->cmdname, params->rk_key_file, strerror(errno));
+		return NULL;
+	}
+	pkey = PEM_read_PrivateKey(f, NULL, NULL, NULL);
+	fclose(f);
+	if (!pkey) {
+		fprintf(stderr, "%s: Can't parse key %s (PEM RSA private key expected)\n",
+			params->cmdname, params->rk_key_file);
+		return NULL;
+	}
+	if (!EVP_PKEY_get_bn_param(pkey, "n", &n) || !n ||
+	    BN_bn2binpad(n, modulus, 256) != 256) {
+		fprintf(stderr, "%s: Key %s is not a 2048-bit RSA key\n",
+			params->cmdname, params->rk_key_file);
+		BN_free(n);
+		EVP_PKEY_free(pkey);
+		return NULL;
+	}
+	BN_free(n);
+	/* The PKA engine reads operands little-endian (like the exponent
+	 * "01 00 01 00"), so store the modulus byte-reversed.
+	 */
+	for (i = 0; i < 128; i++) {
+		uint8_t tmp = modulus[i];
+
+		modulus[i] = modulus[255 - i];
+		modulus[255 - i] = tmp;
+	}
+
+	return pkey;
+}
+
+/*
+ * Raw (unpadded) RSA sign, little-endian operands, matching the Rockchip
+ * PKA engine convention (the exponent is stored "01 00 01 00" i.e. 65537
+ * little-endian).
+ */
+static int rk_signed_raw_rsa_sign(EVP_PKEY *pkey, const uint8_t *msg_le,
+				  uint8_t *sig_le)
+{
+	EVP_PKEY_CTX *ctx;
+	uint8_t msg_be[256], sig_be[256];
+	size_t siglen = sizeof(sig_be);
+	int i, ret;
+
+	for (i = 0; i < 256; i++)
+		msg_be[i] = msg_le[255 - i];
+
+	ctx = EVP_PKEY_CTX_new(pkey, NULL);
+	if (!ctx)
+		return -1;
+	ret = EVP_PKEY_sign_init(ctx);
+	if (!ret)
+		goto out;
+	ret = EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_NO_PADDING);
+	if (ret > 0)
+		ret = EVP_PKEY_sign(ctx, sig_be, &siglen, msg_be, 256);
+out:
+	EVP_PKEY_CTX_free(ctx);
+	if (ret != 1 || siglen != sizeof(sig_be))
+		return -1;
+
+	for (i = 0; i < 256; i++)
+		sig_le[i] = sig_be[255 - i];
+
+	return 0;
+}
+
+/*
+ * Build the 0x800-byte RSAK block that the BootROM's rump_roast() expects:
+ *
+ *   +0x00: "RSAK" magic, flags (0x323), data length (0xda)
+ *   +0x20: 0x200-byte key blob (modulus || 65537-le || zeros); the SHA256
+ *          of this blob is the value fused into efuse for provisioning
+ *   +0x220: 256-byte raw RSA signature over the message at +0x368
+ *   +0x320: hash1 = SHA256(init stage), 0xffffffff, hash2 = SHA256(boot stage)
+ *   +0x368: 256-byte message: SHA256(hash1 || hash2) followed by zeros
+ *           (exact message layout TBD, see FORMAT.md notes)
+ */
+static int rk_signed_build_rsak(struct image_tool_params *params, void *buf)
+{
+	uint8_t *blk = buf;
+	uint8_t *init, *boot;
+	size_t init_size, boot_size;
+	uint8_t hash1[32], hash2[32], keyblob[RK_RSAK_KEY_SIZE];
+	EVP_PKEY *pkey;
+	int i;
+
+	init = rk_signed_read_file(params, spl_params.init_file, &init_size);
+	if (!init)
+		return -1;
+	boot = rk_signed_read_file(params, spl_params.boot_file, &boot_size);
+	if (!boot) {
+		free(init);
+		return -1;
+	}
+
+	if (rk_sha256(init, init_size, hash1) ||
+	    rk_sha256(boot, boot_size, hash2)) {
+		fprintf(stderr, "%s: SHA256 failed\n", params->cmdname);
+		free(init);
+		free(boot);
+		return -1;
+	}
+	free(init);
+	free(boot);
+
+	memset(blk, 0, RK_RSAK_SIZE);
+	memcpy(blk, "RSAK", 4);
+	*(uint32_t *)(blk + RK_RSAK_FLAGS_OFF) = cpu_to_le32(RK_RSAK_FLAGS);
+	*(uint32_t *)(blk + RK_RSAK_LEN_OFF) = cpu_to_le32(RK_RSAK_DATA_LEN);
+
+	/* key blob: modulus || exponent 65537 (LE) || zeros */
+	memset(keyblob, 0, sizeof(keyblob));
+	pkey = rk_signed_load_key(params, keyblob);
+	if (!pkey)
+		return -1;
+	memcpy(keyblob + RK_RSAK_EXP_OFF - RK_RSAK_KEY_OFF, "\x01\x00\x01\x00",
+	       4);
+	memcpy(blk + RK_RSAK_KEY_OFF, keyblob, sizeof(keyblob));
+
+	/* payload hashes */
+	memcpy(blk + RK_RSAK_HASH1_OFF, hash1, 32);
+	memset(blk + RK_RSAK_HASH1_OFF + 32, 0xff, 4);
+	memcpy(blk + RK_RSAK_HASH2_OFF, hash2, 32);
+	memset(blk + RK_RSAK_HASH2_OFF + 32, 0xff, 4);
+
+	/* message: SHA256(hash1 || hash2) || zeros (exact layout TBD) */
+	{
+		uint8_t hcat[64];
+
+		memcpy(hcat, hash1, 32);
+		memcpy(hcat + 32, hash2, 32);
+		if (rk_sha256(hcat, sizeof(hcat), blk + RK_RSAK_MSG_OFF)) {
+			fprintf(stderr, "%s: SHA256 failed\n", params->cmdname);
+			EVP_PKEY_free(pkey);
+			return -1;
+		}
+	}
+
+	if (rk_signed_raw_rsa_sign(pkey, blk + RK_RSAK_MSG_OFF,
+				   blk + RK_RSAK_SIG_OFF)) {
+		fprintf(stderr, "%s: RSA signing failed\n", params->cmdname);
+		EVP_PKEY_free(pkey);
+		return -1;
+	}
+	EVP_PKEY_free(pkey);
+
+	/* The efuse value to provision for this key */
+	if (rk_sha256(blk + RK_RSAK_KEY_OFF, RK_RSAK_KEY_SIZE, keyblob))
+		return -1;
+	fprintf(stderr, "Rockchip key blob SHA256 (for efuse provisioning): ");
+	for (i = 0; i < 32; i++)
+		fprintf(stderr, "%02x", keyblob[i]);
+	fprintf(stderr, "\n");
+
+	return 0;
+}
+#endif /* CONFIG_IS_ENABLED(LIBCRYPTO) */
+
 static const unsigned char rc4_key[16] = {
 	124, 78, 3, 4, 85, 5, 9, 7,
 	45, 44, 123, 56, 23, 13, 23, 17
@@ -210,6 +467,24 @@ static int rkcommon_get_aligned_size(struct image_tool_params *params,
 	return ROUND(size, RK_SIZE_ALIGN);
 }
 
+static bool rkcommon_is_header_v2(struct image_tool_params *params)
+{
+	struct spl_info *info = rkcommon_get_spl_info(params->imagename);
+
+	return (info->header_ver == RK_HEADER_V2);
+}
+
+/**
+ * rkcommon_is_signed() - check if secure-boot signing was requested
+ *
+ * Signing is opt-in via the --rk-key option and is only implemented
+ * for the v1-header SoCs (rk3399 family).
+ */
+bool rkcommon_is_signed(struct image_tool_params *params)
+{
+	return params->rk_key_file && !rkcommon_is_header_v2(params);
+}
+
 int rkcommon_check_params(struct image_tool_params *params)
 {
 	int i, size;
@@ -243,6 +518,17 @@ int rkcommon_check_params(struct image_tool_params *params)
 		if (size < 0)
 			return EXIT_FAILURE;
 		spl_params.boot_size = size;
+	}
+
+	if (params->rk_key_file) {
+		if (rkcommon_is_header_v2(params)) {
+			fprintf(stderr, "ERROR: --rk-key only supports v1-header SoCs (rk3399 family)\n");
+			return EXIT_FAILURE;
+		}
+		if (!spl_params.boot_file) {
+			fprintf(stderr, "ERROR: --rk-key requires an init:boot pair (-d tpl.bin:spl.bin)\n");
+			return EXIT_FAILURE;
+		}
 	}
 
 	if (spl_params.init_size > rkcommon_get_spl_size(params)) {
@@ -296,13 +582,6 @@ bool rkcommon_need_rc4_spl(struct image_tool_params *params)
 	return info->spl_rc4;
 }
 
-static bool rkcommon_is_header_v2(struct image_tool_params *params)
-{
-	struct spl_info *info = rkcommon_get_spl_info(params->imagename);
-
-	return (info->header_ver == RK_HEADER_V2);
-}
-
 static void do_sha256_hash(uint8_t *buf, uint32_t size, uint8_t *out)
 {
 	sha256_context ctx;
@@ -321,21 +600,40 @@ static void rkcommon_set_header0(void *buf, struct image_tool_params *params)
 	hdr->magic = cpu_to_le32(RK_MAGIC);
 	hdr->disable_rc4 = cpu_to_le32(!rkcommon_need_rc4_spl(params));
 	hdr->init_offset = cpu_to_le16(RK_INIT_OFFSET);
-	hdr->init_size   = cpu_to_le16(spl_params.init_size / RK_BLK_SIZE);
+	if (rkcommon_is_signed(params)) {
+		/*
+		 * Signed idblock: the payload is RC4-encoded like the ROM
+		 * expects (disable_rc4 = 0) and holds the RSAK block plus
+		 * both the init and boot stages, matching the rk_sign_tool
+		 * output format.
+		 */
+		hdr->disable_rc4 = 0;
+		hdr->init_size = cpu_to_le16((RK_RSAK_SIZE +
+					      spl_params.init_size +
+					      spl_params.boot_size) /
+					     RK_BLK_SIZE);
+		hdr->init_boot_size = 0;
+	} else {
+		hdr->init_size = cpu_to_le16(spl_params.init_size /
+					     RK_BLK_SIZE);
+	}
 
-	/*
-	 * init_boot_size needs to be set, as it is read by the BootROM
-	 * to determine the size of the next-stage bootloader (e.g. U-Boot
-	 * proper), when used with the back-to-bootrom functionality.
-	 *
-	 * see https://patch.msgid.link/CANbgqAQ5p-fE4T-Ye9UAMs-nRGU8AP_yxDf+5SbZbP8bxLa0dg@mail.gmail.com/
-	 * for a more detailed explanation by Andy Yan
-	 */
-	if (spl_params.boot_file)
-		init_boot_size = spl_params.init_size + spl_params.boot_size;
-	else
-		init_boot_size = spl_params.init_size + RK_MAX_BOOT_SIZE;
-	hdr->init_boot_size = cpu_to_le16(init_boot_size / RK_BLK_SIZE);
+	if (!rkcommon_is_signed(params)) {
+		/*
+		 * init_boot_size needs to be set, as it is read by the BootROM
+		 * to determine the size of the next-stage bootloader (e.g. U-Boot
+		 * proper), when used with the back-to-bootrom functionality.
+		 *
+		 * see https://patch.msgid.link/CANbgqAQ5p-fE4T-Ye9UAMs-nRGU8AP_yxDf+5SbZbP8bxLa0dg@mail.gmail.com/
+		 * for a more detailed explanation by Andy Yan
+		 */
+		if (spl_params.boot_file)
+			init_boot_size = spl_params.init_size +
+					 spl_params.boot_size;
+		else
+			init_boot_size = spl_params.init_size + RK_MAX_BOOT_SIZE;
+		hdr->init_boot_size = cpu_to_le16(init_boot_size / RK_BLK_SIZE);
+	}
 
 	rc4_encode(buf, RK_BLK_SIZE, rc4_key);
 }
@@ -397,6 +695,19 @@ void rkcommon_set_header(void *buf,  struct stat *sbuf,  int ifd,
 							spl_params.init_size,
 							spl_params.boot_size);
 		}
+
+		if (rkcommon_is_signed(params)) {
+			/*
+			 * Signed idblock: RC4-encode the RSAK block and the
+			 * payloads, 512 bytes at a time with a fresh cipher
+			 * state per block, as the BootROM decodes them.
+			 */
+			off_t off;
+
+			for (off = RK_SPL_HDR_START; off < sbuf->st_size;
+			     off += RK_BLK_SIZE)
+				rc4_encode(buf + off, RK_BLK_SIZE, rc4_key);
+		}
 	}
 }
 
@@ -414,6 +725,7 @@ static int rkcommon_parse_header(const void *buf, struct header0_info *header0,
 {
 	unsigned int hdr1_offset;
 	struct header1_info *hdr1_sdmmc, *hdr1_spi;
+	uint8_t dec_sd[RK_BLK_SIZE], dec_spi[RK_BLK_SIZE];
 	int i;
 
 	if (spl_info)
@@ -429,14 +741,24 @@ static int rkcommon_parse_header(const void *buf, struct header0_info *header0,
 	if (le32_to_cpu(header0->magic) != RK_MAGIC)
 		return -EPROTO;
 
-	/* We don't support RC4 encoded image payloads here, yet... */
-	if (le32_to_cpu(header0->disable_rc4) == 0)
-		return -ENOSYS;
-
 	hdr1_offset = le16_to_cpu(header0->init_offset) * RK_BLK_SIZE;
 	hdr1_sdmmc = (struct header1_info *)(buf + hdr1_offset);
 	hdr1_spi = (struct header1_info *)(buf +
 					   rkcommon_offset_to_spi(hdr1_offset));
+
+	/*
+	 * Signed images carry an RC4-encoded payload (disable_rc4 == 0),
+	 * decode the first block of both layouts to find the payload magic.
+	 */
+	if (le32_to_cpu(header0->disable_rc4) == 0) {
+		memcpy(dec_sd, buf + hdr1_offset, RK_BLK_SIZE);
+		rc4_encode(dec_sd, RK_BLK_SIZE, rc4_key);
+		memcpy(dec_spi, buf + rkcommon_offset_to_spi(hdr1_offset),
+		       RK_BLK_SIZE);
+		rc4_encode(dec_spi, RK_BLK_SIZE, rc4_key);
+		hdr1_sdmmc = (struct header1_info *)dec_sd;
+		hdr1_spi = (struct header1_info *)dec_spi;
+	}
 
 	for (i = 0; i < ARRAY_SIZE(spl_infos); i++) {
 		if (!memcmp(&hdr1_sdmmc->magic, spl_infos[i].spl_hdr,
@@ -451,6 +773,12 @@ static int rkcommon_parse_header(const void *buf, struct header0_info *header0,
 			return IH_TYPE_RKSPI;
 		}
 	}
+
+	/* Signed images: the payload starts with the RSAK block */
+	if (!memcmp(&hdr1_sdmmc->magic, "RSAK", RK_SPL_HDR_SIZE))
+		return IH_TYPE_RKSD;
+	if (!memcmp(&hdr1_spi->magic, "RSAK", RK_SPL_HDR_SIZE))
+		return IH_TYPE_RKSPI;
 
 	return -1;
 }
@@ -493,11 +821,15 @@ int rkcommon_verify_header(unsigned char *buf, int size,
 		return 0;
 
 	/* Match the 'imagename' against the 'spl_hdr' found */
-	spl_info = rkcommon_get_spl_info(params->imagename);
-	if (spl_info && img_spl_info)
+	if (img_spl_info) {
+		spl_info = rkcommon_get_spl_info(params->imagename);
+		if (!spl_info)
+			return -ENOENT;
 		return strcmp(spl_info->spl_hdr, img_spl_info->spl_hdr);
+	}
 
-	return -ENOENT;
+	/* Signed images ("RSAK") carry no chip tag: accept */
+	return 0;
 }
 
 void rkcommon_print_header(const void *buf, struct image_tool_params *params)
@@ -536,9 +868,14 @@ void rkcommon_print_header(const void *buf, struct image_tool_params *params)
 		init_size = header0.init_size * RK_BLK_SIZE;
 		boot_size = header0.init_boot_size * RK_BLK_SIZE - init_size;
 
-		printf("Image Type:   Rockchip %s (%s) boot image\n",
-		       spl_info->spl_hdr,
-		       (image_type == IH_TYPE_RKSD) ? "SD/MMC" : "SPI");
+		if (spl_info) {
+			printf("Image Type:   Rockchip %s (%s) boot image\n",
+			       spl_info->spl_hdr,
+			       (image_type == IH_TYPE_RKSD) ? "SD/MMC" : "SPI");
+		} else {
+			printf("Image Type:   Rockchip RSAK (%s) signed boot image\n",
+			       (image_type == IH_TYPE_RKSD) ? "SD/MMC" : "SPI");
+		}
 	}
 
 	printf("Init Data Size: %d bytes\n", init_size);
@@ -584,7 +921,8 @@ int rkcommon_vrec_header(struct image_tool_params *params,
 	 * 4 bytes of these images can safely be overwritten using the
 	 * boot magic.
 	 */
-	tparams->header_size = RK_SPL_HDR_START;
+	tparams->header_size = rkcommon_is_signed(params) ?
+		RK_SIGNED_HDR_SIZE : RK_SPL_HDR_START;
 
 	/* Allocate, clear and install the header */
 	tparams->hdr = malloc(tparams->header_size);
@@ -594,6 +932,22 @@ int rkcommon_vrec_header(struct image_tool_params *params,
 		exit(EXIT_FAILURE);
 	}
 	memset(tparams->hdr, 0, tparams->header_size);
+
+	if (rkcommon_is_signed(params)) {
+#if CONFIG_IS_ENABLED(LIBCRYPTO)
+		/* Build the RSAK signature block right after the header */
+		if (rk_signed_build_rsak(params,
+					 tparams->hdr + RK_SPL_HDR_START)) {
+			fprintf(stderr, "%s: signing failed\n",
+				params->cmdname);
+			exit(EXIT_FAILURE);
+		}
+#else
+		fprintf(stderr, "%s: signing requires CONFIG_TOOLS_LIBCRYPTO\n",
+			params->cmdname);
+		exit(EXIT_FAILURE);
+#endif
+	}
 
 	/*
 	 * We need to store the original file-size (i.e. before padding), as

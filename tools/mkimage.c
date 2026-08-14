@@ -140,6 +140,9 @@ static void usage(const char *msg)
 	fprintf(stderr, "       %s -V ==> print version information and exit\n",
 		params.cmdname);
 	fprintf(stderr, "Use '-T list' to see a list of available image types\n");
+	fprintf(stderr, "Rockchip options: [--rk-key keyfile]\n"
+			"          --rk-key => RSA private key (PEM) to sign Rockchip\n"
+			"                       secure-boot images (rk3399 idblock)\n");
 	fprintf(stderr, "Long options are available; read the man page for details\n");
 
 	exit(EXIT_FAILURE);
@@ -200,6 +203,7 @@ static const struct option longopts[] = {
 	{ "verbose", no_argument, NULL, 'v' },
 	{ "version", no_argument, NULL, 'V' },
 	{ "xip", no_argument, NULL, 'x' },
+	{ "rk-key", required_argument, NULL, 1000 },
 	{ "tfa-bl31-file", no_argument, NULL, 'y' },
 	{ "tfa-bl31-addr", no_argument, NULL, 'Y' },
 	{ "tee-file", no_argument, NULL, 'z' },
@@ -396,6 +400,9 @@ static void process_args(int argc, char **argv)
 					params.cmdname, optarg);
 				exit(EXIT_FAILURE);
 			}
+			break;
+		case 1000:
+			params.rk_key_file = optarg;
 			break;
 		default:
 			usage("Invalid option");
