@@ -257,6 +257,7 @@ config ROCKCHIP_RK3399
 	select SUPPORT_TPL
 	select SPL
 	select SPL_ATF
+	select OF_BOARD_SETUP if OPTEE
 	select SPL_BOARD_INIT if SPL
 	select SPL_LOAD_FIT
 	select SPL_CLK if SPL
