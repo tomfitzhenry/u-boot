@@ -1150,6 +1150,10 @@ Also, the ``optional`` property may be used to mark entries as optional::
         optional;
     };
 
+For OP-TEE, ``tee.bin`` (the flat binary) must be used with OP-TEE 3.8.0 and
+newer; ``tee.elf`` is an intermediate build artifact that cannot be loaded
+(see the tee-os entry documentation).
+
 Obviously the entry must exist in the image description for it to be processed
 at all, so a way needs to be found to have the entry remove itself.
 
