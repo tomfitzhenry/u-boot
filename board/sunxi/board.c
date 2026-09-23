@@ -12,6 +12,7 @@
 
 #include <clock_legacy.h>
 #include <dm.h>
+#include <usb.h>
 #include <env.h>
 #include <hang.h>
 #include <i2c.h>
@@ -188,6 +189,24 @@ enum env_location env_get_location(enum env_operation op, int prio)
 
 	return ENVL_UNKNOWN;
 }
+
+#if CONFIG_IS_ENABLED(USB_MUSB_GADGET) && !CONFIG_IS_ENABLED(DM_USB_GADGET)
+/*
+ * The legacy gadget stack (used by sunxi MUSB, whose musb_register() has no
+ * DM path) calls board_usb_init() to bring up the controller.  Probe the
+ * MUSB UDC device so musb_usb_probe() runs musb_register() and the g_dnl
+ * gadget can attach.
+ */
+int board_usb_init(int index, enum usb_init_type init)
+{
+	struct udevice *dev;
+
+	if (init == USB_INIT_DEVICE)
+		return uclass_get_device(UCLASS_USB_GADGET_GENERIC, index, &dev);
+
+	return 0;
+}
+#endif
 
 /* called only from U-Boot proper */
 int board_init(void)
