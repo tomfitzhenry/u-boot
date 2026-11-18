@@ -45,6 +45,11 @@ config ARMADA_XP
 	bool
 	select ARMADA_32BIT
 
+config ARMADA_370
+	bool
+	select ARMADA_32BIT
+	select ARMADA_XP
+
 # ARMv8 SoCs...
 config ARMADA_3700
 	bool
@@ -263,6 +268,9 @@ config DDR_64BIT
 
 config DDR_32BIT
 	bool "32bit bus width"
+
+config DDR_16BIT
+	bool "16bit bus width"
 
 endchoice
 
