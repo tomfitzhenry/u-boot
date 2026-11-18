@@ -22,7 +22,7 @@
 #endif
 
 #ifdef STATIC_TRAINING
-static void ddr3_static_training_init(void);
+void ddr3_static_training_init(void);
 #endif
 #ifdef DUNIT_STATIC
 static void ddr3_static_mc_init(void);

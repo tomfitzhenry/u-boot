@@ -48,6 +48,8 @@
 
 #ifdef CONFIG_DDR_32BIT
 #define BUS_WIDTH                               32
+#elif defined(CONFIG_DDR_16BIT)
+#define BUS_WIDTH                               16
 #else
 #define BUS_WIDTH				64
 #endif
@@ -58,7 +60,7 @@
 #define REG_DIMM_SKIP_WL			0
 
 /* Marvell boards specific configurations */
-#if defined(DB_78X60_PCAC)
+#if defined(DB_78X60_PCAC) || defined(CONFIG_ARMADA_370)
 #define STATIC_TRAINING
 #endif
 
