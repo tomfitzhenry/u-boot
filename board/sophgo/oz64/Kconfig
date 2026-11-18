@@ -1,0 +1,12 @@
+if TARGET_SOPHGO_OZ64
+
+config SYS_BOARD
+	default "oz64"
+
+config SYS_VENDOR
+	default "sophgo"
+
+config SYS_CONFIG_NAME
+	default "oz64"
+
+endif
