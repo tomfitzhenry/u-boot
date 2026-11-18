@@ -523,6 +523,96 @@ static void hdmi_av_composer(struct dw_hdmi *hdmi,
 	hdmi_write(hdmi, edid->vsync_len.typ, HDMI_FC_VSYNCINWIDTH);
 }
 
+/*
+ * CEA-861 VIC lookup for the video modes commonly produced by the
+ * dw-hdmi.  The refresh rate is encoded in (pixelclock, htotal, vtotal),
+ * which makes the match unambiguous.
+ */
+struct hdmi_vic_entry {
+	u32 pixelclock;
+	u16 hactive;
+	u16 vactive;
+	u16 htotal;
+	u16 vtotal;
+	u8 vic;
+};
+
+static const struct hdmi_vic_entry hdmi_vic_table[] = {
+	{ 25175000,   640,  480,  800,  525, 1 },
+	{ 27000000,   720,  480,  858,  525, 3 },
+	{ 74250000,  1280,  720, 1650,  750, 4 },
+	{ 74250000,  1280,  720, 1980,  750, 5 },
+	{ 74250000,  1920, 1080, 2640, 1125, 31 },
+	{ 148352000, 1920, 1080, 2200, 1125, 16 },
+	{ 148500000, 1920, 1080, 2200, 1125, 16 },
+	{ 148500000, 1920, 1080, 2640, 1125, 17 },
+	{ 296703000, 3840, 2160, 4400, 2250, 96 },
+	{ 297000000, 3840, 2160, 4400, 2250, 96 },
+	{ 594000000, 3840, 2160, 4400, 2250, 97 },
+	{ 297000000, 4096, 2160, 4400, 2250, 100 },
+	{ 594000000, 4096, 2160, 4400, 2250, 102 },
+};
+
+static u8 hdmi_lookup_vic(const struct display_timing *edid)
+{
+	u32 htotal = edid->hactive.typ + edid->hfront_porch.typ +
+		     edid->hsync_len.typ + edid->hback_porch.typ;
+	u32 vtotal = edid->vactive.typ + edid->vfront_porch.typ +
+		     edid->vsync_len.typ + edid->vback_porch.typ;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(hdmi_vic_table); i++) {
+		const struct hdmi_vic_entry *e = &hdmi_vic_table[i];
+
+		if (edid->pixelclock.typ == e->pixelclock &&
+		    edid->hactive.typ == e->hactive &&
+		    edid->vactive.typ == e->vactive &&
+		    htotal == e->htotal && vtotal == e->vtotal)
+			return e->vic;
+	}
+
+	return 0;
+}
+
+static void hdmi_config_avi(struct dw_hdmi *hdmi,
+			    const struct display_timing *edid)
+{
+	u8 vic = hdmi_lookup_vic(edid);
+	u8 aspect = 0;
+	u8 val;
+
+	/*
+	 * The Designware IP uses a different byte format from standard
+	 * AVI info frames, though generally the bits are in the correct
+	 * bytes.
+	 */
+	if (edid->hactive.typ * 9 == edid->vactive.typ * 16)
+		aspect = 2; /* 16:9 */
+	else if (edid->hactive.typ * 3 == edid->vactive.typ * 4)
+		aspect = 1; /* 4:3 */
+
+	/*
+	 * AVI data byte 1: scan info in bits 4,5 (none), colorspace in
+	 * bits 0,1 (RGB).
+	 */
+	val = (0 << 4) | HDMI_FC_AVICONF0_PIX_FMT_RGB;
+	hdmi_write(hdmi, val, HDMI_FC_AVICONF0);
+
+	/* AVI data byte 2: no colorimetry, picture aspect ratio */
+	val = (0 << 6) | (aspect << 4) | 0;
+	hdmi_write(hdmi, val, HDMI_FC_AVICONF1);
+
+	/* AVI data byte 3: no extended colorimetry, default quantization */
+	val = (0 << 4) | (0 << 2) | 0;
+	hdmi_write(hdmi, val, HDMI_FC_AVICONF2);
+
+	/* AVI data byte 4: video identification code */
+	hdmi_write(hdmi, vic, HDMI_FC_AVIVID);
+
+	/* AVI data byte 5: no pixel repetition */
+	hdmi_write(hdmi, 0, HDMI_FC_AVICONF3);
+}
+
 static bool hdmi_bus_fmt_is_rgb(unsigned int bus_format)
 {
 	switch (bus_format) {
@@ -1003,6 +1093,8 @@ int dw_hdmi_enable(struct dw_hdmi *hdmi, const struct display_timing *edid)
 	      edid->pixelclock.typ, edid->hactive.typ, edid->vactive.typ);
 
 	hdmi_av_composer(hdmi, edid);
+	if (edid->hdmi_monitor)
+		hdmi_config_avi(hdmi, edid);
 
 	ret = hdmi->ops->phy_set(hdmi, edid->pixelclock.typ);
 	if (ret)
