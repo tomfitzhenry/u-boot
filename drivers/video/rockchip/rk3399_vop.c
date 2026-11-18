@@ -72,11 +72,15 @@ static int rk3399_vop_probe(struct udevice *dev)
 }
 
 struct rkvop_driverdata rk3399_lit_driverdata = {
+	.max_xres = 2560,
+	.max_yres = 1600,
 	.set_pin_polarity = rk3399_set_pin_polarity,
 };
 
 struct rkvop_driverdata rk3399_big_driverdata = {
 	.features = VOP_FEATURE_OUTPUT_10BIT,
+	.max_xres = 4096,
+	.max_yres = 2160,
 	.set_pin_polarity = rk3399_set_pin_polarity,
 };
 

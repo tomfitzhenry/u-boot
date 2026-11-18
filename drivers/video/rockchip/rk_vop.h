@@ -24,6 +24,9 @@ struct rkvop_driverdata {
 	int dsp_offset;
 	/* configuration */
 	u32 features;
+	/* maximum display size this VOP can output (0 = unlimited) */
+	u16 max_xres;
+	u16 max_yres;
 	/* block-specific setters/getters */
 	void (*set_pin_polarity)(struct udevice *, enum vop_modes, u32);
 };
