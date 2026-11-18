@@ -336,6 +336,21 @@ static int rk8xx_probe(struct udevice *dev)
 		      pmic_reg_read(dev, init_data[i].reg));
 	}
 
+	/*
+	 * Quartz64 Zero: VCC_SYS -- every buck and the USB VBUS switches -- comes
+	 * out of the RK817 charger's power path, whose input current limit resets
+	 * to a value too low for a bus-powered USB 3 hub: switching VBUS on in
+	 * board_init() then resets the PMIC in a loop. Raise it (Pine64's Android
+	 * value) before the boot-on regulators are enabled.
+	 */
+	if (priv->variant == RK817_ID &&
+	    of_machine_is_compatible("pine64,quartz64-zero")) {
+		ret = pmic_reg_write(dev, RK817_PMIC_CHRG_IN, 0xdf);
+		if (ret < 0)
+			printf("%s: i2c set reg 0x%x failed, ret=%d\n",
+			       __func__, RK817_PMIC_CHRG_IN, ret);
+	}
+
 	if (!IS_ENABLED(CONFIG_XPL_BUILD)) {
 		printf("PMIC:  RK%x ", show_variant);
 		if (on_source && off_source)
