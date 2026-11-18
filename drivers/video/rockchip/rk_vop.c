@@ -223,6 +223,19 @@ static void rkvop_mode_set(struct udevice *dev,
 	writel(0x01, &regs->reg_cfg_done); /* enable reg config */
 }
 
+static bool rkvop_mode_valid(void *priv, const struct display_timing *timing)
+{
+	struct rkvop_driverdata *data =
+		(struct rkvop_driverdata *)dev_get_driver_data(priv);
+
+	if (data->max_xres && timing->hactive.typ > data->max_xres)
+		return false;
+	if (data->max_yres && timing->vactive.typ > data->max_yres)
+		return false;
+
+	return true;
+}
+
 /**
  * rk_display_init() - Try to enable the given display device
  *
@@ -250,6 +263,9 @@ static int rk_display_init(struct udevice *dev, ulong fbbase, ofnode ep_node)
 	struct display_timing timing;
 	struct udevice *disp;
 	int ret;
+	u8 edid[EDID_EXT_SIZE];
+	int edid_size;
+	int panel_bpp;
 	u32 remote_phandle;
 	struct display_plat *disp_uc_plat;
 	struct clk clk;
@@ -343,7 +359,29 @@ static int rk_display_init(struct udevice *dev, ulong fbbase, ofnode ep_node)
 		return ret;
 	}
 
-	ret = display_read_timing(disp, &timing);
+	/*
+	 * Pick a timing the VOP can actually drive: the EDID's first
+	 * detailed timing is not always within the VOP's output limits
+	 * (e.g. the rk3399 vop-lit tops out at 2560x1600, while a 4K
+	 * TV's preferred timing is 3840x2160).  Have the EDID parser
+	 * iterate the detailed timings through a mode_valid that
+	 * enforces the VOP's maximum output size.
+	 */
+	ret = display_read_edid(disp, edid, sizeof(edid));
+	if (ret < 0) {
+		debug("%s: Failed to read EDID\n", __func__);
+		return ret;
+	}
+	edid_size = ret;
+	ret = edid_get_timing_validate(edid, edid_size, &timing, &panel_bpp,
+				       rkvop_mode_valid, dev);
+	if (ret) {
+		/*
+		 * No detailed timing fits the VOP: fall back to the
+		 * preferred timing rather than showing nothing.
+		 */
+		ret = edid_get_timing(edid, edid_size, &timing, &panel_bpp);
+	}
 	if (ret) {
 		debug("%s: Failed to read timings\n", __func__);
 		return ret;
