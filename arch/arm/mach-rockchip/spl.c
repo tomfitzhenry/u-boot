@@ -92,9 +92,45 @@ u32 spl_boot_device(void)
 	return boot_device;
 }
 
+/*
+ * True when the next stage should be read from the eMMC boot partition
+ * rather than from the partition a raw read would hit by default.
+ *
+ * When the BootROM loads SPL from SPI NOR (the split layout this project
+ * uses: early stage in SPI NOR, payload FIT on the eMMC boot partition),
+ * a raw MMC read would land in the eMMC user area.  Reading the boot
+ * partition instead requires the generic SPL loader's EMMCBOOT mode.
+ *
+ * When the BootROM booted us from this very eMMC or from an SD card, keep
+ * the historical behaviour: read, raw, whatever partition the BootROM
+ * left selected.
+ */
+static int rockchip_emmc_boot_partition(struct mmc *mmc)
+{
+	u32 boot_source = read_brom_bootsource_id();
+
+	return mmc->part_config != MMCPART_NOAVAILABLE &&
+	       boot_source != BROM_BOOTSOURCE_EMMC &&
+	       boot_source != BROM_BOOTSOURCE_SD;
+}
+
 u32 spl_mmc_boot_mode(struct mmc *mmc, const u32 boot_device)
 {
+	if (IS_ENABLED(CONFIG_SUPPORT_EMMC_BOOT) &&
+	    rockchip_emmc_boot_partition(mmc))
+		return MMCSD_MODE_EMMCBOOT;
+
 	return MMCSD_MODE_RAW;
+}
+
+unsigned long arch_spl_mmc_get_uboot_raw_sector(struct mmc *mmc,
+						unsigned long raw_sect)
+{
+	/* A payload on the eMMC boot partition starts at sector 0. */
+	if (rockchip_emmc_boot_partition(mmc))
+		return 0;
+
+	return raw_sect;
 }
 
 __weak int board_early_init_f(void)
