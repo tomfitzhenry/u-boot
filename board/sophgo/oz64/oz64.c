@@ -91,10 +91,32 @@ static void cv1800b_emmc_pinctrl_init(void)
 		writel(0x44, SG2000_PINCTRL_BASE + conf_offsets[i]);
 }
 
+#define SG2000_PWM0_BUCK_MUX	0x0ec
+#define SG2000_USB_VBUS_EN_MUX	0x100
+
+/*
+ * The USB-A port's VBUS switch is the SoC's USB_VBUS_EN pin (C12, function
+ * 0), as in the Linux Oz64 DT.  U-Boot has no SG2000 pinctrl driver, so
+ * mux it here before the DWC2 controller probes.
+ *
+ * The FSBL leaves PWM0_BUCK (0x0ec) muxed to GPIO (function 3).  Restore
+ * function 0 (the buck PWM) before the eMMC probes; otherwise CMD1 times
+ * out with "Card did not respond to voltage select" and U-Boot cannot see
+ * the eMMC at all.  This is not GPIOB5: the 0x0ec pad is the buck control.
+ */
+static void cv1800b_usb_init(void)
+{
+	writel(0, SG2000_PINCTRL_BASE + SG2000_PWM0_BUCK_MUX);
+	writel(0, SG2000_PINCTRL_BASE + SG2000_USB_VBUS_EN_MUX);
+}
+
 int board_init(void)
 {
 	if (IS_ENABLED(CONFIG_MMC_SDHCI_CV1800B))
 		cv1800b_emmc_pinctrl_init();
+
+	if (IS_ENABLED(CONFIG_USB_DWC2))
+		cv1800b_usb_init();
 
 	/*
 	 * U-Boot has no internal-ePHY driver, so take it out of reset before

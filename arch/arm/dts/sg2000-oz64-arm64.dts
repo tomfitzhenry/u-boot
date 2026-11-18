@@ -108,6 +108,16 @@
 			power-source = <3300>;
 		};
 	};
+
+	usb_vbus_en_cfg: usb-vbus-en-cfg {
+		usb-vbus-en-pins {
+			/* C12/USB_VBUS_EN, function 0 (hardware VBUS enable). */
+			pinmux = <PINMUX(PIN_USB_VBUS_EN, 0)>;
+			bias-pull-down;
+			drive-strength-microamp = <10800>;
+			power-source = <1800>;
+		};
+	};
 };
 
 &uart0 {
@@ -157,5 +167,15 @@
 };
 
 &mdio {
+	status = "okay";
+};
+
+/*
+ * USB-A host port: DWC2 in host mode with the CV1800B USB2 PHY.  The
+ * USB_VBUS_EN pin (C12) is muxed in board_init() because U-Boot has no
+ * SG2000 pinctrl driver.  The PHY node lives under the top syscon.
+ */
+&usb {
+	dr_mode = "host";
 	status = "okay";
 };
