@@ -4,3 +4,29 @@
  */
 
 #include "rk3588-u-boot.dtsi"
+
+/*
+ * The USB-C DOWNLOAD port is wired to USB2.0 OTG0 (USB_OTG0_DP/DM,
+ * USB_OTG0_VBUSDET, USB_OTG0_ID on the schematic; the connector carries no
+ * SuperSpeed pair), so it can serve as the U-Boot fastboot/UMS gadget.
+ * The upstream board DT leaves usb_host0_xhci and its PHYs disabled, which
+ * leaves U-Boot with no UDC: `fastboot usb 0` fails with
+ * "USB init failed: -19".  Force peripheral mode on the USB2 PHY only, as
+ * rk3588-generic.dts does, since USBDP (DisplayPort/USB3) is not wired for
+ * device mode here.
+ */
+&u2phy0 {
+	status = "okay";
+};
+
+&u2phy0_otg {
+	status = "okay";
+};
+
+&usb_host0_xhci {
+	dr_mode = "peripheral";
+	maximum-speed = "high-speed";
+	phys = <&u2phy0_otg>;
+	phy-names = "usb2-phy";
+	status = "okay";
+};
