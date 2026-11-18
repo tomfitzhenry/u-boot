@@ -1,0 +1,181 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
+/*
+ * Pine64 Oz64, ARM64 (Cortex-A53) core of the Sophgo SG2000.
+ *
+ * The SoC description comes from U-Boot's OF_UPSTREAM copy of the mainline
+ * sg2000/cv180x/cv181x device trees.  Only the board wiring is added here.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/pinctrl/pinctrl-sg2000.h>
+
+#include <arm64/sophgo/sg2000.dtsi>
+
+/ {
+	model = "Pine64 Oz64";
+	compatible = "pine64,oz64", "sophgo,sg2000";
+
+	aliases {
+		serial0 = &uart0;
+		mmc0 = &sdhci0;
+		mmc1 = &emmc;
+		ethernet0 = &gmac0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+};
+
+&osc {
+	clock-frequency = <25000000>;
+};
+
+&pinctrl {
+	uart0_cfg: uart0-cfg {
+		uart0-pins {
+			pinmux = <PINMUX(PIN_UART0_TX, 0)>,
+				 <PINMUX(PIN_UART0_RX, 0)>;
+			bias-pull-up;
+			drive-strength-microamp = <10800>;
+			power-source = <3300>;
+		};
+	};
+
+	sdhci0_cfg: sdhci0-cfg {
+		sdhci0-cd-pins {
+			pinmux = <PINMUX(PIN_SD0_CD, 0)>;
+			bias-pull-up;
+			drive-strength-microamp = <10800>;
+			power-source = <3300>;
+		};
+
+		sdhci0-clk-pins {
+			pinmux = <PINMUX(PIN_SD0_CLK, 0)>;
+			bias-pull-up;
+			drive-strength-microamp = <16100>;
+			power-source = <3300>;
+		};
+
+		sdhci0-cmd-pins {
+			pinmux = <PINMUX(PIN_SD0_CMD, 0)>;
+			bias-pull-up;
+			drive-strength-microamp = <10800>;
+			power-source = <3300>;
+		};
+
+		sdhci0-data-pins {
+			pinmux = <PINMUX(PIN_SD0_D0, 0)>,
+				 <PINMUX(PIN_SD0_D1, 0)>,
+				 <PINMUX(PIN_SD0_D2, 0)>,
+				 <PINMUX(PIN_SD0_D3, 0)>;
+			bias-pull-up;
+			drive-strength-microamp = <10800>;
+			power-source = <3300>;
+		};
+	};
+
+	emmc_cfg: emmc-cfg {
+		emmc-rstn-pins {
+			pinmux = <PINMUX(PIN_EMMC_RSTN, 0)>;
+			bias-pull-up;
+			drive-strength-microamp = <10800>;
+			power-source = <3300>;
+		};
+
+		emmc-clk-pins {
+			pinmux = <PINMUX(PIN_EMMC_CLK, 0)>;
+			bias-pull-up;
+			drive-strength-microamp = <10800>;
+			power-source = <3300>;
+		};
+
+		emmc-cmd-pins {
+			pinmux = <PINMUX(PIN_EMMC_CMD, 0)>;
+			bias-pull-up;
+			drive-strength-microamp = <10800>;
+			power-source = <3300>;
+		};
+
+		emmc-data-pins {
+			pinmux = <PINMUX(PIN_EMMC_DAT0, 0)>,
+				 <PINMUX(PIN_EMMC_DAT1, 0)>,
+				 <PINMUX(PIN_EMMC_DAT2, 0)>,
+				 <PINMUX(PIN_EMMC_DAT3, 0)>;
+			bias-pull-up;
+			drive-strength-microamp = <10800>;
+			power-source = <3300>;
+		};
+	};
+
+	usb_vbus_en_cfg: usb-vbus-en-cfg {
+		usb-vbus-en-pins {
+			/* C12/USB_VBUS_EN, function 0 (hardware VBUS enable). */
+			pinmux = <PINMUX(PIN_USB_VBUS_EN, 0)>;
+			bias-pull-down;
+			drive-strength-microamp = <10800>;
+			power-source = <1800>;
+		};
+	};
+};
+
+&uart0 {
+	clock-frequency = <25000000>;
+	pinctrl-0 = <&uart0_cfg>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&sdhci0 {
+	bus-width = <4>;
+	no-1-8-v;
+	no-mmc;
+	no-sdio;
+	disable-wp;
+	pinctrl-0 = <&sdhci0_cfg>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+/*
+ * eMMC is enabled for read-only inspection (bootflow scan, mmc info).  The
+ * build pins the environment to "nowhere", and nothing here writes to it.
+ *
+ * The DA4032 on the jukebox board is unreliable at 26 MHz/4-bit and above:
+ * cold boots fail with `mmc fail to send stop cmd` or `fs_devread`.  Cap it
+ * at 13 MHz/4-bit and set the eMMC boot bus to x1 backward; that reads
+ * GPT/ESP/btrfs/boot0 reliably.  The SDHCI driver patch below passes this
+ * DT max-frequency through and keeps the DT bus width.
+ */
+&emmc {
+	bus-width = <4>;
+	max-frequency = <13000000>;
+	cap-mmc-hw-reset;
+	cap-mmc-highspeed;
+	no-1-8-v;
+	no-sd;
+	no-sdio;
+	non-removable;
+	pinctrl-0 = <&emmc_cfg>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&gmac0 {
+	status = "okay";
+};
+
+&mdio {
+	status = "okay";
+};
+
+/*
+ * USB-A host port: DWC2 in host mode with the CV1800B USB2 PHY.  The
+ * USB_VBUS_EN pin (C12) is muxed in board_init() because U-Boot has no
+ * SG2000 pinctrl driver.  The PHY node lives under the top syscon.
+ */
+&usb {
+	dr_mode = "host";
+	status = "okay";
+};

@@ -18,6 +18,7 @@ obj-$(CONFIG_BCM6348_USBH_PHY) += bcm6348-usbh-phy.o
 obj-$(CONFIG_BCM6358_USBH_PHY) += bcm6358-usbh-phy.o
 obj-$(CONFIG_BCM6368_USBH_PHY) += bcm6368-usbh-phy.o
 obj-$(CONFIG_BCM_SR_PCIE_PHY) += phy-bcm-sr-pcie.o
+obj-$(CONFIG_PHY_SOPHGO_CV1800B_USB2) += phy-cv1800b-usb2.o
 obj-$(CONFIG_PHY_SANDBOX) += sandbox-phy.o
 obj-$(CONFIG_$(PHASE_)PIPE3_PHY) += ti-pipe3-phy.o
 obj-$(CONFIG_AM654_PHY) += phy-ti-am654.o

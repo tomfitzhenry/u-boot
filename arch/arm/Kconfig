@@ -1572,6 +1572,19 @@ config TARGET_LX2162AQDS
 	  Support for NXP LX2162AQDS platform.
 	  The lx2162aqds support is based on LX2160A Layerscape Architecture processor.
 
+config TARGET_SOPHGO_OZ64
+	bool "Support Pine64 Oz64 (Sophgo SG2000)"
+	select ARM64
+	select CPU_GENERIC
+	select DM
+	select DM_SERIAL
+	select DM_MMC
+	select BOARD_LATE_INIT
+	help
+	  This option enables support for the Pine64 Oz64 single board
+	  computer's ARM64 (Cortex-A53) core inside the Sophgo SG2000
+	  System-in-Package.
+
 config TARGET_HIKEY
 	bool "Support HiKey 96boards Consumer Edition Platform"
 	select ARM64
@@ -2210,6 +2223,10 @@ config ARCH_GXP
 	imply CMD_DM
 
 endchoice
+
+if TARGET_SOPHGO_OZ64
+source "board/sophgo/oz64/Kconfig"
+endif
 
 config SUPPORT_PASSING_ATAGS
 	bool "Support pre-devicetree ATAG-based booting"
