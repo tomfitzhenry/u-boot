@@ -244,22 +244,29 @@
 
 #include <config_distro_bootcmd.h>
 
+/* Add the USB CDC-ACM gadget (drv_usbacm) to the console when built. */
+#ifdef CONFIG_USB_FUNCTION_ACM
+#define CONSOLE_ACM ",usbacm"
+#else
+#define CONSOLE_ACM ""
+#endif
+
 #ifdef CONFIG_USB_KEYBOARD
 #define CONSOLE_STDIN_SETTINGS \
-	"stdin=serial,usbkbd\0"
+	"stdin=serial" CONSOLE_ACM ",usbkbd\0"
 #else
 #define CONSOLE_STDIN_SETTINGS \
-	"stdin=serial\0"
+	"stdin=serial" CONSOLE_ACM "\0"
 #endif
 
 #ifdef CONFIG_VIDEO
 #define CONSOLE_STDOUT_SETTINGS \
-	"stdout=serial,vidconsole\0" \
-	"stderr=serial,vidconsole\0"
+	"stdout=serial" CONSOLE_ACM ",vidconsole\0" \
+	"stderr=serial" CONSOLE_ACM ",vidconsole\0"
 #else
 #define CONSOLE_STDOUT_SETTINGS \
-	"stdout=serial\0" \
-	"stderr=serial\0"
+	"stdout=serial" CONSOLE_ACM "\0" \
+	"stderr=serial" CONSOLE_ACM "\0"
 #endif
 
 #define PARTS_DEFAULT \
