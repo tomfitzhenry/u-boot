@@ -1,0 +1,6 @@
+NETGEAR-RN102 BOARD
+M:	Tom Fitzhenry <tom@tom-fitzhenry.me.uk>
+S:	Maintained
+F:	board/netgear/rn102/
+F:	include/configs/rn102.h
+F:	configs/rn102_defconfig

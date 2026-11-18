@@ -1,0 +1,12 @@
+if TARGET_NETGEAR_RN102
+
+config SYS_BOARD
+	default "rn102"
+
+config SYS_VENDOR
+	default "netgear"
+
+config SYS_CONFIG_NAME
+	default "rn102"
+
+endif
