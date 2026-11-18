@@ -45,6 +45,11 @@ config ARMADA_XP
 	bool
 	select ARMADA_32BIT
 
+config ARMADA_370
+	bool
+	select ARMADA_32BIT
+	select ARMADA_XP
+
 # ARMv8 SoCs...
 config ARMADA_3700
 	bool
@@ -251,6 +256,10 @@ config TARGET_CRS3XX_98DX3236
 	bool "Support CRS3XX-98DX3236"
 	select 98DX3236
 
+config TARGET_NETGEAR_RN102
+	bool "Netgear ReadyNAS RN102"
+	select ARMADA_370
+
 endchoice
 
 choice
@@ -263,6 +272,9 @@ config DDR_64BIT
 
 config DDR_32BIT
 	bool "32bit bus width"
+
+config DDR_16BIT
+	bool "16bit bus width"
 
 endchoice
 
@@ -332,6 +344,7 @@ config SYS_BOARD
 	default "db-xc3-24g4xg" if TARGET_DB_XC3_24G4XG
 	default "crs3xx-98dx3236" if TARGET_CRS3XX_98DX3236
 	default "mvebu_alleycat-5" if TARGET_MVEBU_ALLEYCAT5
+	default "rn102" if TARGET_NETGEAR_RN102
 
 config SYS_CONFIG_NAME
 	default "clearfog" if TARGET_CLEARFOG
@@ -359,6 +372,7 @@ config SYS_CONFIG_NAME
 	default "db-xc3-24g4xg" if TARGET_DB_XC3_24G4XG
 	default "crs3xx-98dx3236" if TARGET_CRS3XX_98DX3236
 	default "mvebu_alleycat-5" if TARGET_MVEBU_ALLEYCAT5
+	default "rn102" if TARGET_NETGEAR_RN102
 
 config SYS_VENDOR
 	default "Marvell" if TARGET_DB_MV784MP_GP
@@ -385,6 +399,7 @@ config SYS_VENDOR
 	default "alliedtelesis" if TARGET_X960
 	default "mikrotik" if TARGET_CRS3XX_98DX3236
 	default "Marvell" if TARGET_MVEBU_ALLEYCAT5
+	default "netgear" if TARGET_NETGEAR_RN102
 
 config SYS_SOC
 	default "mvebu"
