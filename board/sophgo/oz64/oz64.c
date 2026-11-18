@@ -95,6 +95,63 @@ static void cv1800b_emmc_pinctrl_init(void)
 #define SG2000_USB_VBUS_EN_MUX	0x100
 
 /*
+ * microSD slot power and pad bring-up.
+ *
+ * The slot's VDD is switched by Q1 (WPM3407 P-FET) whose gate SD_PWR_EN is
+ * driven from the SDIO0_PWR_EN pad under the TOP SD power switch.  There is
+ * no driver for that switch in mainline U-Boot, so after a UART-loader boot
+ * the slot is unpowered and mmc 0 cannot see the card.  The vendor U-Boot's
+ * cvi_sdhci_probe() powers the slot for 3.3 V (top+0x1f4 = 0x9) and muxes the
+ * SDIO0 pads to their card-present configuration; do the same here so the
+ * mainline U-Boot (and Linux, which inherits the powered slot) can use the
+ * card regardless of the boot path.
+ */
+#define SG2000_TOP_BASE			0x03000000
+#define SG2000_PINMUX_BASE		0x03001000
+#define SG2000_TOP_SD_PWRSW_CTRL	0x1f4
+#define SG2000_SD_PWRSW_3V3		0x9
+
+static void cv1800b_sd_power_init(void)
+{
+	/* mux registers, function 0 (SDIO0); vendor cvi_sdio0_pad_function() */
+	static const u16 mux_offsets[] = {
+		0x034, 0x038, 0x01c, 0x020, 0x024, 0x028, 0x02c, 0x030,
+	};
+	/* pad config: bits [3:2] = drive strength, card-present values */
+	static const struct {
+		u16 offset;
+		u32 value;
+	} conf[] = {
+		{ 0x900, 1 }, { 0x904, 2 }, { 0xa00, 2 }, { 0xa04, 1 },
+		{ 0xa08, 1 }, { 0xa0c, 1 }, { 0xa10, 1 }, { 0xa14, 1 },
+	};
+	int i;
+
+	/*
+	 * Mainline U-Boot has no SG2000 reset/clock driver on this path: release
+	 * the SD0 reset, enable its clock gates and select the 375 MHz PLL as the
+	 * card clock source, as the vendor cvi_sdhci_probe() does (pll_reg =
+	 * 0x03002070, bypass bit 6 in 0x03002030).
+	 */
+	writel(readl(0x03003000) & ~BIT(16), 0x03003000);
+	writel(readl(0x03003000) | BIT(16), 0x03003000);
+	writel(readl(0x03002000) | BIT(18) | BIT(19) | BIT(20), 0x03002000);
+	writel(0x40009, 0x03002070);
+	writel(readl(0x03002030) & ~BIT(6), 0x03002030);
+
+	writel(SG2000_SD_PWRSW_3V3, SG2000_TOP_BASE + SG2000_TOP_SD_PWRSW_CTRL);
+
+	for (i = 0; i < ARRAY_SIZE(mux_offsets); i++)
+		writel(0, SG2000_PINMUX_BASE + mux_offsets[i]);
+	for (i = 0; i < ARRAY_SIZE(conf); i++) {
+		u32 value = readl(SG2000_PINMUX_BASE + conf[i].offset);
+
+		value = (value & ~(0x3 << 2)) | (conf[i].value << 2);
+		writel(value, SG2000_PINMUX_BASE + conf[i].offset);
+	}
+}
+
+/*
  * The USB-A port's VBUS switch is the SoC's USB_VBUS_EN pin (C12, function
  * 0), as in the Linux Oz64 DT.  U-Boot has no SG2000 pinctrl driver, so
  * mux it here before the DWC2 controller probes.
@@ -114,6 +171,8 @@ int board_init(void)
 {
 	if (IS_ENABLED(CONFIG_MMC_SDHCI_CV1800B))
 		cv1800b_emmc_pinctrl_init();
+
+	cv1800b_sd_power_init();
 
 	if (IS_ENABLED(CONFIG_USB_DWC2))
 		cv1800b_usb_init();
