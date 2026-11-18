@@ -14,6 +14,26 @@
 
 #define PHY_TX_SRC_INVERT  BIT(8)
 
+/*
+ * CV1800B vendor register area 1.  The DWC MSHC "P_VENDOR_SPECIFIC_AREA1"
+ * pointer is 0x200 on this SoC, so Linux sdhci-of-dwcmshc.c's
+ * CV18XX_SDHCI_* offsets are used here as absolute offsets.
+ *
+ * sdhci_setup_cfg()/sdhci_init() reset the standard SDHCI registers but do
+ * not restore these vendor ones, while Linux's cv18xx_sdhci_reset() programs
+ * them on every reset: eMMC function enable + 1T latency, the PHY TX bypass,
+ * and the RX/TX clock source inversion.  Without them the eMMC receive
+ * sampling window is only good enough for the low boot clock.
+ */
+#define CV1800B_MSHC_CTRL		0x200
+#define  CV1800B_MSHC_CTRL_EMMC_FUNC_EN	BIT(0)
+#define  CV1800B_MSHC_CTRL_LATANCY_1T	BIT(1)
+#define CV1800B_PHY_TX_RX_DLY		0x240
+#define  CV1800B_PHY_TX_SRC_INVERT_TX	BIT(8)
+#define  CV1800B_PHY_RX_SRC_INVERT_RX	BIT(24)
+#define CV1800B_PHY_CONFIG		0x24c
+#define  CV1800B_PHY_CONFIG_TX_BPS	BIT(0)
+
 struct cv1800b_sdhci_plat {
 	struct mmc_config cfg;
 	struct mmc mmc;
@@ -63,6 +83,28 @@ static int cv1800b_execute_tuning(struct mmc *mmc, u8 opcode)
 	return 0;
 }
 #endif
+
+/*
+ * Program the CV1800B vendor PHY/function registers exactly as Linux's
+ * sdhci-of-dwcmshc.c does in cv18xx_sdhci_reset(), after the SDHCI core reset
+ * has run.  On the Oz64 this turns a link that read reliably only at the
+ * 13 MHz boot clock into one that reads reliably at 26/52 MHz too.
+ */
+static void cv1800b_sdhci_vendor_init(struct sdhci_host *host)
+{
+	u32 val;
+
+	val = sdhci_readl(host, CV1800B_MSHC_CTRL);
+	val |= CV1800B_MSHC_CTRL_EMMC_FUNC_EN | CV1800B_MSHC_CTRL_LATANCY_1T;
+	sdhci_writel(host, val, CV1800B_MSHC_CTRL);
+
+	val = sdhci_readl(host, CV1800B_PHY_CONFIG);
+	val |= CV1800B_PHY_CONFIG_TX_BPS;
+	sdhci_writel(host, val, CV1800B_PHY_CONFIG);
+
+	val = CV1800B_PHY_TX_SRC_INVERT_TX | CV1800B_PHY_RX_SRC_INVERT_RX;
+	sdhci_writel(host, val, CV1800B_PHY_TX_RX_DLY);
+}
 
 const struct sdhci_ops cv1800b_sdhci_sd_ops = {
 #if CONFIG_IS_ENABLED(MMC_SUPPORTS_TUNING)
@@ -116,7 +158,17 @@ static int cv1800b_sdhci_probe(struct udevice *dev)
 	if (dev_read_u32_default(dev, "bus-width", 1) == 1)
 		plat->cfg.host_caps &= ~(MMC_MODE_4BIT | MMC_MODE_8BIT);
 
-	return sdhci_probe(dev);
+	ret = sdhci_probe(dev);
+	if (ret)
+		return ret;
+
+	/*
+	 * sdhci_probe() -> sdhci_init() -> SDHCI_RESET_ALL has just run; apply
+	 * the vendor PHY/function setup now, before the first command.
+	 */
+	cv1800b_sdhci_vendor_init(host);
+
+	return 0;
 }
 
 static const struct udevice_id cv1800b_sdhci_match[] = {
