@@ -14,15 +14,30 @@ class Entry_tee_os(Entry_blob_named_by_arg):
 
     Properties / Entry arguments:
         - tee-os-path: Filename of file to read into entry. This is typically
-            called tee.bin or tee.elf
+            called tee.bin
 
     This entry holds the run-time firmware, typically started by U-Boot SPL.
     See the U-Boot README for your architecture or board for how to use it. See
     https://github.com/OP-TEE/optee_os for more information about OP-TEE.
 
-    Note that if the file is in ELF format, it must go in a FIT. In that case,
-    this entry will mark itself as absent, providing the data only through the
-    read_elf_segments() method.
+    The loadable OP-TEE image is the flat binary (tee.bin, produced by
+    gen_tee_bin.py with an 'OPTE\\x01' header).  Since OP-TEE 3.8.0 (2020)
+    the binary carries a struct boot_embdata block - integrity hashes and
+    relocations - appended after linking, which the TEE's early init reads
+    from memory at __data_end.  The ELF (tee.elf) is an intermediate build
+    artifact that does not contain this block, so loading an ELF leaves the
+    TEE reading an uninitialised length and it dies silently before its
+    first console print.  tee.elf can only be used with OP-TEE versions
+    before 3.8.0.  See:
+
+    - https://github.com/OP-TEE/optee_os/commit/5dd1570ac5b0f6563b1a9c074533a19107b8222d
+    - https://github.com/OP-TEE/optee_os/issues/4542
+    - https://github.com/u-boot/u-boot/commit/348310233dac76f952d5ee728c7fc275f83eff7a
+
+    Note that if the file is in ELF format, it must go in a FIT (and is only
+    usable with OP-TEE before 3.8.0). In that case, this entry will mark
+    itself as absent, providing the data only through the read_elf_segments()
+    method.
 
     Marking this entry as absent means that it if is used in the wrong context
     it can be automatically dropped. Thus it is possible to add an OP-TEE entry
@@ -67,7 +82,7 @@ class Entry_tee_os(Entry_blob_named_by_arg):
         result = super().ObtainContents(fake_size)
         if not self.missing:
             # If using the flat binary (without the OP-TEE header), then it is
-            # just included as a blob. But if it is an ELF or usees the v1
+            # just included as a blob. But if it is an ELF or uses the v1
             # binary header, then the FIT implementation will call
             # read_elf_segments() to get the segment information
             if elf.is_valid(self.data):

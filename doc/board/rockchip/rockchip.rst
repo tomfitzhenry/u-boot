@@ -288,6 +288,31 @@ To build rk3399 boards:
         make evb-rk3399_defconfig
         make CROSS_COMPILE=aarch64-linux-gnu-
 
+OP-TEE
+^^^^^^
+
+Arm64 Rockchip SoCs can boot OP-TEE as the secure payload (BL32).  TF-A is
+built with SPD=opteed and OP-TEE is embedded in the U-Boot FIT by binman::
+
+        export BL31=../trusted-firmware-a/build/rk3399/release/bl31/bl31.elf
+        export TEE=../optee_os/build/rk3399/core/tee.bin
+        make evb-rk3399_defconfig
+        make CROSS_COMPILE=aarch64-linux-gnu-
+
+The TEE must be the flat binary ``tee.bin`` when using OP-TEE 3.8.0 (2020)
+and newer.  Since then, the loadable image carries a ``struct boot_embdata``
+block (integrity hashes and relocations) that is appended after linking by
+``gen_tee_bin.py`` and read by the TEE's early init from memory at
+``__data_end``; the ELF (``tee.elf``) is an intermediate build artifact that
+does not contain this block, so a TEE loaded from ELF segments dies silently
+before its first console print.  ``tee.elf`` can only be used with OP-TEE
+versions before 3.8.0.  See:
+
+- https://github.com/OP-TEE/optee_os/commit/5dd1570ac5b0f6563b1a9c074533a19107b8222d
+- https://github.com/OP-TEE/optee_os/issues/4542
+- https://github.com/u-boot/u-boot/commit/348310233dac76f952d5ee728c7fc275f83eff7a
+- https://optee.readthedocs.io/en/latest/architecture/porting_guidelines.html#binaries
+
 To build rk3528 boards:
 
 .. code-block:: bash
