@@ -1,0 +1,45 @@
+{
+  "nodes": {
+    "git-loom-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1794769547,
+        "narHash": "sha256-+WJPksWVIpT9AdPLkUwiksxICj+1Ef5USMg91/xJzKg=",
+        "owner": "narnaud",
+        "repo": "git-loom",
+        "rev": "de8477d69a87c6b09dd0fbbb8e757bee72bec02f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "narnaud",
+        "ref": "v1.1.0",
+        "repo": "git-loom",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1789998861,
+        "narHash": "sha256-62XMQD4WLdMAfdT0/8gJmPH2dKeTw908ryNloAplTr8=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "1e8bc658fc985ef27ccd66d107d767b32bb7ef98",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-26.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "git-loom-src": "git-loom-src",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

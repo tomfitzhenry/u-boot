@@ -1,0 +1,191 @@
+# Declarative manifest for git-loom U-Boot branch integration.
+#
+# All active feature branches woven into the `lab/integration` branch are
+# listed below in weave order. Upstreamable branches (`upstream = true`) must
+# contain only linear commits with `Signed-off-by:` trailers and must not touch
+# CI/Nix/loom/agent doc files.
+
+base = "v2026.10"
+integration_branch = "lab/integration"
+upstream_url = "https://github.com/u-boot/u-boot.git"
+
+# ---------------------------------------------------------------------------
+# Generic Video & Binman
+# ---------------------------------------------------------------------------
+
+[[branch]]
+name = "drv/video/dw-hdmi-avi-infoframe"
+upstream = true
+subsystem = "video: dw-hdmi"
+board = "RockPro64 / HDMI boards"
+description = "Send CEA-861 AVI infoframe when driving an HDMI sink to prevent overscan"
+
+[[branch]]
+name = "doc/binman/tee-os-elf"
+upstream = true
+subsystem = "binman: tee-os"
+board = "Rockchip / OP-TEE boards"
+description = "Document that OP-TEE 3.8+ requires flat tee.bin rather than tee.elf"
+
+# ---------------------------------------------------------------------------
+# Rockchip RK3399 (RockPro64, Pinebook Pro, PinePhone Pro) & Generic Rockchip
+# ---------------------------------------------------------------------------
+
+[[branch]]
+name = "drv/video/rk3399-vop-max-output"
+upstream = true
+subsystem = "video: rockchip"
+board = "RockPro64 / RK3399"
+description = "Validate EDID modes against RK3399 vop-lit (2560x1600) and vop-big (4096x2160) limits"
+
+[[branch]]
+name = "soc/rk3399/optee-reserved-memory"
+upstream = true
+subsystem = "rockchip: rk3399"
+board = "RockPro64 / Pinebook Pro / PinePhone Pro"
+description = "Declare OP-TEE TZDRAM/SHMEM reserved-memory and /firmware/optee at OS boot"
+
+[[branch]]
+name = "local-rk3399-sd-first-boot"
+stacked_on = "soc/rk3399/optee-reserved-memory"
+upstream = false
+subsystem = "local: rockchip"
+board = "RockPro64 / Pinebook Pro / PinePhone Pro"
+description = "Prefer SD recovery FIT payload over eMMC boot partition on split-boot RK3399 boards"
+
+[[branch]]
+name = "soc/rk3399/signed-idblock"
+upstream = true
+subsystem = "tools: mkimage: rockchip"
+board = "Rockchip RK3399"
+description = "Add RK3399 BootROM RSA-2048 secure-boot idblock signing to mkimage plus self-test"
+
+[[branch]]
+name = "soc/rockchip/spl-emmc-boot-partition"
+upstream = true
+subsystem = "rockchip: spl"
+board = "Rockchip split-boot boards"
+description = "Read next-stage FIT from eMMC boot partition (MMCSD_MODE_EMMCBOOT) when SPL boots from SPI NOR"
+
+# ---------------------------------------------------------------------------
+# Pine64 QuartzPro64 (Rockchip RK3588, arm64)
+# ---------------------------------------------------------------------------
+
+[[branch]]
+name = "dts/rk3588-quartzpro64-usb-otg"
+upstream = true
+subsystem = "arm: dts: rockchip"
+board = "Pine64 QuartzPro64 (RK3588)"
+description = "Enable USB2.0 OTG0 DOWNLOAD port in peripheral mode for fastboot and UMS"
+
+# ---------------------------------------------------------------------------
+# Pine64 Quartz64 Zero (Rockchip RK3566, arm64)
+# ---------------------------------------------------------------------------
+
+[[branch]]
+name = "drv/power/rk817-quartz64-zero-input-limit"
+upstream = true
+subsystem = "power: pmic: rk8xx"
+board = "Pine64 Quartz64 Zero (RK3566)"
+description = "Raise RK817 charger input current limit on Quartz64 Zero before USB VBUS enable"
+
+[[branch]]
+name = "dts/rk3566-quartz64-zero"
+stacked_on = "drv/power/rk817-quartz64-zero-input-limit"
+upstream = true
+subsystem = "rockchip: rk3566"
+board = "Pine64 Quartz64 Zero (RK3566)"
+description = "Add Pine64 Quartz64 Zero DTS, u-boot.dtsi, and quartz64-zero-rk3566_defconfig"
+
+# ---------------------------------------------------------------------------
+# Anbernic RG40XX-H / RG35XX (Allwinner H700, arm64)
+# ---------------------------------------------------------------------------
+
+[[branch]]
+name = "soc/sunxi/console-usbacm"
+upstream = true
+subsystem = "sunxi: console"
+board = "Anbernic H700 handhelds"
+description = "Include usbacm CDC-ACM gadget in default sunxi stdin/stdout/stderr when enabled"
+
+[[branch]]
+name = "fix/sunxi/musb-udc-probe"
+upstream = true
+subsystem = "sunxi: usb"
+board = "Anbernic H700 / PinePhone"
+description = "Probe legacy MUSB UDC device from board_usb_init() when !DM_USB_GADGET"
+
+[[branch]]
+name = "board/anbernic/rg35xx-h700-lpddr3"
+stacked_on = "fix/sunxi/musb-udc-probe"
+upstream = true
+subsystem = "sunxi: h616"
+board = "Anbernic RG40XX-H / RG35XX (H700 LPDDR3)"
+description = "Add anbernic_rg35xx_h700_lpddr3_defconfig with LPDDR3 DRAM parameters"
+
+# ---------------------------------------------------------------------------
+# Pine64 Oz64 (Sophgo SG2000 / CV1800B, arm64)
+# ---------------------------------------------------------------------------
+
+[[branch]]
+name = "fix/mmc/cv1800b-sdhci"
+upstream = true
+subsystem = "mmc: cv1800b_sdhci"
+board = "Pine64 Oz64 (SG2000)"
+description = "Honour DT max-frequency/bus-width and program CV1800B vendor PHY registers on reset"
+
+[[branch]]
+name = "drv/phy/cv1800b-usb2"
+upstream = true
+subsystem = "phy: sophgo"
+board = "Pine64 Oz64 (SG2000)"
+description = "Add Sophgo CV1800B/SG2000 USB2 PHY driver and DWC2 compatible"
+
+[[branch]]
+name = "board/sophgo/oz64"
+stacked_on = "drv/phy/cv1800b-usb2"
+upstream = true
+subsystem = "board: sophgo: oz64"
+board = "Pine64 Oz64 (SG2000)"
+description = "Oz64 ARM64 board port (2026.10), USB-A host, microSD 3.3V slot power, and eMMC/SD0 reset release"
+
+# ---------------------------------------------------------------------------
+# NETGEAR ReadyNAS 102 (Marvell Armada 370, arm)
+# ---------------------------------------------------------------------------
+
+[[branch]]
+name = "soc/mvebu/armada-370"
+upstream = true
+subsystem = "arm: mvebu"
+board = "NETGEAR ReadyNAS 102 (Armada 370)"
+description = "Armada 370 (88F6710) Kconfig, 16-bit DDR3 bus width, static training, and config.h guard"
+
+[[branch]]
+name = "board/netgear/rn102"
+stacked_on = "soc/mvebu/armada-370"
+upstream = true
+subsystem = "board: netgear: rn102"
+board = "NETGEAR ReadyNAS 102 (Armada 370)"
+description = "Netgear ReadyNAS RN102 board support, static 600 MHz DDR3 MC init, and rn102_defconfig"
+
+# ---------------------------------------------------------------------------
+# QEMU ARM64 SPL eMMC Boot-Partition Test Target (non-upstream)
+# ---------------------------------------------------------------------------
+
+[[branch]]
+name = "local-qemu-arm64-spl"
+upstream = false
+subsystem = "local: qemu"
+board = "QEMU virt (aarch64)"
+description = "Synthetic SPL booting from -bios and loading FIT from PCI SDHCI eMMC boot0"
+
+# ---------------------------------------------------------------------------
+# CI & git-loom manifest (non-upstream)
+# ---------------------------------------------------------------------------
+
+[[branch]]
+name = "local-ci"
+upstream = false
+subsystem = "local: ci"
+board = "all"
+description = "Declarative git-loom manifest, Nix build/test flake, and GitHub Actions workflows"
