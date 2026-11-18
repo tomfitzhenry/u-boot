@@ -38,3 +38,9 @@
 &vdd_log {
 	regulator-init-microvolt = <950000>;
 };
+
+/ {
+	chosen {
+		u-boot,spl-boot-order = "same-as-spl", &sdmmc, &sdhci;
+	};
+};

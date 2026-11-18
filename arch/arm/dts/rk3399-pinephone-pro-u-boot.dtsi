@@ -20,3 +20,9 @@
 		bootph-some-ram;
 	};
 };
+
+/ {
+	chosen {
+		u-boot,spl-boot-order = "same-as-spl", &sdmmc, &sdhci;
+	};
+};

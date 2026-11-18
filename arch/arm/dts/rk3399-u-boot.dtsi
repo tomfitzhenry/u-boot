@@ -12,6 +12,27 @@
 		spi1 = &spi1;
 	};
 
+#ifdef CONFIG_OPTEE
+	/*
+	 * OP-TEE's secure memory (TZDRAM and SHMEM, per plat-rockchip's
+	 * rk3399 flavor).  Declared statically so that U-Boot's LMB - and
+	 * hence the EFI memory map handed to EFI payloads like
+	 * systemd-boot - excludes it.  The /firmware/optee node is
+	 * instead added at OS-boot time by ft_board_setup() in fdt.c, as
+	 * U-Boot's own DM would otherwise bind its OP-TEE driver to it.
+	 */
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		optee@30000000 {
+			reg = <0x0 0x30000000 0x0 0x2400000>;
+			no-map;
+		};
+	};
+#endif
+
 	chosen {
 		u-boot,spl-boot-order = "same-as-spl", &sdhci, &sdmmc;
 	};
