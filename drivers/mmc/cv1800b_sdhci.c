@@ -82,6 +82,7 @@ static int cv1800b_sdhci_probe(struct udevice *dev)
 	struct mmc_uclass_priv *upriv = dev_get_uclass_priv(dev);
 	struct cv1800b_sdhci_plat *plat = dev_get_plat(dev);
 	struct sdhci_host *host = dev_get_priv(dev);
+	u32 f_max;
 	int ret;
 
 	host->name = dev->name;
@@ -101,9 +102,19 @@ static int cv1800b_sdhci_probe(struct udevice *dev)
 	if (ret)
 		return ret;
 
-	ret = sdhci_setup_cfg(&plat->cfg, host, 0, 200000);
+	/*
+	 * sdhci_setup_cfg() otherwise overwrites f_max with host->max_clk and
+	 * unconditionally advertises 4-bit, so honour the DT max-frequency and
+	 * the DT bus width (the jukebox board needs 26 MHz to avoid 52 MHz x4
+	 * read errors).
+	 */
+	f_max = plat->cfg.f_max;
+	ret = sdhci_setup_cfg(&plat->cfg, host, f_max, 200000);
 	if (ret)
 		return ret;
+
+	if (dev_read_u32_default(dev, "bus-width", 1) == 1)
+		plat->cfg.host_caps &= ~(MMC_MODE_4BIT | MMC_MODE_8BIT);
 
 	return sdhci_probe(dev);
 }
