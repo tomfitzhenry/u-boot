@@ -103,6 +103,7 @@ struct image_tool_params {
 	unsigned int fit_tfa_bl31_addr;	/* TFA BL31 load and entry point address */
 	char *fit_tee;		/* TEE file to include */
 	unsigned int fit_tee_addr;	/* TEE load and entry point address */
+	const char *rk_key_file;	/* RSA key for Rockchip secure-boot signing */
 };
 
 /*
