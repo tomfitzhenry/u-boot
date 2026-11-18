@@ -34,6 +34,13 @@ config SPL_PHY
 	  compatible as possible with the equivalent framework found in the
 	  linux kernel.
 
+config PHY_SOPHGO_CV1800B_USB2
+	bool "Sophgo CV1800B/SG2000 USB 2.0 PHY support"
+	depends on PHY
+	help
+	  Support for the USB 2.0 PHY in the Sophgo CV1800B/SG2000 SoC.
+	  The PHY is configured for host mode through the SoC top syscon.
+
 config PHY_SANDBOX
 	bool "Sandbox PHY support"
 	depends on SANDBOX
