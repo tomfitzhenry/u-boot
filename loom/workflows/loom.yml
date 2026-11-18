@@ -1,0 +1,89 @@
+name: git-loom weave & verify
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches:
+      - local-ci
+      - lab/integration
+      - "dts/**"
+      - "soc/**"
+      - "drv/**"
+      - "fix/**"
+      - "board/**"
+      - "doc/**"
+      - "local-*"
+  push:
+    branches:
+      - local-ci
+      - "dts/**"
+      - "soc/**"
+      - "drv/**"
+      - "fix/**"
+      - "board/**"
+      - "doc/**"
+      - "local-*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: loom-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+
+jobs:
+  weave-and-verify:
+    name: weave-and-verify
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' || github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository with full history and branches
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: local-ci
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v22
+
+      - name: Nix cache
+        uses: Mic92/hestia@v3
+
+      - name: Fetch all origin feature branches and tags
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --tags --prune origin "+refs/heads/*:refs/remotes/origin/*"
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            HEAD_BRANCH="${{ github.head_ref }}"
+            git fetch origin "${{ github.event.pull_request.head.sha }}"
+            git branch -f "$HEAD_BRANCH" "${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.ref_name }}" != "local-ci" ]; then
+            git branch -f "${{ github.ref_name }}" "${{ github.sha }}"
+          fi
+
+      - name: Verify branch hygiene and weave integration branch with git-loom
+        run: |
+          EXTRA_ARGS=()
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            HEAD_BRANCH="${{ github.head_ref }}"
+            if ! grep -Fq "name = \"$HEAD_BRANCH\"" loom/loom.toml; then
+              EXTRA_ARGS+=(--extra-branch "$HEAD_BRANCH")
+            fi
+          fi
+          nix flake check path:./loom -L
+          nix develop path:./loom#default --command ./loom/weave.sh verify "${EXTRA_ARGS[@]}"
+          nix develop path:./loom#default --command ./loom/weave.sh apply "${EXTRA_ARGS[@]}"
+
+      - name: Build custom boards, verify signing, and run QEMU SPL boot test
+        run: |
+          git checkout lab/integration
+          nix develop path:./loom#default --command ./loom/verify-uboot.sh
+
+      - name: Push woven lab/integration branch
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.merged == true }}
+        run: |
+          git push --atomic --force origin \
+            refs/heads/lab/integration:refs/heads/lab/integration

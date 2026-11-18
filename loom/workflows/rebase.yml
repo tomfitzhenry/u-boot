@@ -1,0 +1,101 @@
+name: Rebase feature branches onto upstream U-Boot
+
+on:
+  schedule:
+    # Run weekly on Mondays at 06:30 UTC (after upstream U-Boot -rc / quarterly release tags).
+    - cron: "30 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "Upstream tag or commit from u-boot/u-boot to rebase onto (empty = latest tag on main)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Build and test the rebased weave without pushing"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: loom-upstream-rebase
+  cancel-in-progress: false
+
+jobs:
+  rebase-and-test:
+    name: rebase-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: local-ci
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v22
+
+      - name: Nix cache
+        uses: Mic92/hestia@v3
+
+      - name: Fetch all origin feature branches and upstream U-Boot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --tags --prune origin "+refs/heads/*:refs/remotes/origin/*"
+          git remote add uboot-upstream https://github.com/u-boot/u-boot.git || true
+          git fetch --tags uboot-upstream main
+
+      - name: Rebase feature branches and weave lab/integration with git-loom
+        id: rebase
+        run: |
+          TARGET_REF="${{ inputs.upstream_ref }}"
+          if [ -z "$TARGET_REF" ]; then
+            TARGET_REF="$(git describe --tags --abbrev=0 uboot-upstream/main)"
+          fi
+          echo "target_ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
+          nix flake check path:./loom -L
+          nix develop path:./loom#default --command ./loom/weave.sh rebase "$TARGET_REF"
+
+      - name: Build and verify rebased tree (custom boards, mkimage signing, QEMU SPL boot)
+        run: |
+          git checkout lab/integration
+          nix develop path:./loom#default --command ./loom/verify-uboot.sh
+
+      - name: Atomically push rebased feature branches and woven lab/integration tree
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git checkout local-ci
+          REFS=(
+            "refs/heads/local-ci:refs/heads/local-ci"
+            "refs/heads/lab/integration:refs/heads/lab/integration"
+          )
+          while IFS= read -r branch; do
+            [ -n "$branch" ] || continue
+            REFS+=("refs/heads/$branch:refs/heads/$branch")
+          done < <(python3 -c '
+          import tomllib
+          with open("loom/loom.toml", "rb") as f:
+              cfg = tomllib.load(f)
+          for b in cfg.get("branch", []):
+              if b["name"] != "local-ci":
+                  print(b["name"])
+          ')
+          git push --atomic --force-with-lease origin "${REFS[@]}"
+
+      - name: Open or update issue on rebase/test failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="git-loom: automated upstream U-Boot rebase failed (${{ steps.rebase.outputs.target_ref || 'latest' }})"
+          BODY="Automated rebase onto u-boot/u-boot failed in workflow run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Live branches were not modified."
+          EXISTING="$(gh issue list --repo "${{ github.repository }}" --state open --search "git-loom: automated upstream U-Boot rebase failed in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "$BODY"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" --body "$BODY"
+          fi
