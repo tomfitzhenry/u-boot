@@ -152,6 +152,46 @@ static void cv1800b_sd_power_init(void)
 }
 
 /*
+ * CV1800B/SG2000 reset controller (reset-simple, active low: a SET bit means
+ * the reset is *released*).  When U-Boot is booted over UART/loader instead of
+ * from eMMC boot0, the BootROM/FSBL never runs its eMMC initialisation and
+ * leaves the eMMC and SD0 resets asserted, so the SDHCI register block reads
+ * back all zeros and mmc init fails with "Card did not respond to voltage
+ * select".  Release them here so a UART-booted U-Boot can access the eMMC
+ * (this is the boot0-independent recovery path).
+ */
+#define SG2000_RST_CTRL_BASE	0x03003000
+#define SG2000_RST_EMMC		15
+#define SG2000_RST_SD0		16
+
+static void cv1800b_emmc_reset_deassert(void)
+{
+	u32 reg = readl(SG2000_RST_CTRL_BASE);
+
+	writel(reg | BIT(SG2000_RST_EMMC) | BIT(SG2000_RST_SD0),
+	       SG2000_RST_CTRL_BASE);
+}
+
+/*
+ * Clock gate register 0 (clkgen base 0x03002000): bit 15 AXI4_EMMC,
+ * bit 16 EMMC, bit 17 EMMC_100K, bit 18 AXI4_SD0, bit 19 SD0,
+ * bit 20 SD0_100K (Linux clk-cv1800 / U-Boot clk-cv1800b gate tables).  The
+ * card clock source and divider (REG_DIV_CLK_EMMC/REG_DIV_CLK_SD0) are left
+ * alone: the FSBL configures them on the boot0 path and a future eMMC-fitted
+ * hardware validation must confirm the divider too.
+ */
+#define SG2000_CLK_EN_0	0x03002000
+#define SG2000_CLK_EN_0_EMMC_SD0	(BIT(15) | BIT(16) | BIT(17) | \
+					 BIT(18) | BIT(19) | BIT(20))
+
+static void cv1800b_emmc_clock_enable(void)
+{
+	u32 reg = readl(SG2000_CLK_EN_0);
+
+	writel(reg | SG2000_CLK_EN_0_EMMC_SD0, SG2000_CLK_EN_0);
+}
+
+/*
  * The USB-A port's VBUS switch is the SoC's USB_VBUS_EN pin (C12, function
  * 0), as in the Linux Oz64 DT.  U-Boot has no SG2000 pinctrl driver, so
  * mux it here before the DWC2 controller probes.
@@ -169,8 +209,11 @@ static void cv1800b_usb_init(void)
 
 int board_init(void)
 {
-	if (IS_ENABLED(CONFIG_MMC_SDHCI_CV1800B))
+	if (IS_ENABLED(CONFIG_MMC_SDHCI_CV1800B)) {
 		cv1800b_emmc_pinctrl_init();
+		cv1800b_emmc_clock_enable();
+		cv1800b_emmc_reset_deassert();
+	}
 
 	cv1800b_sd_power_init();
 
