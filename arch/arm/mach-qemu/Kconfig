@@ -18,6 +18,7 @@ config TARGET_QEMU_ARM_64BIT
 	bool "ARMv8, 64bit"
 	select ARM64
 	select BOARD_LATE_INIT
+	select SUPPORT_SPL
 
 config TARGET_QEMU_ARM_SBSA
 	bool "SBSA Reference"
@@ -35,6 +36,12 @@ config SYS_BOARD
 
 config SYS_CONFIG_NAME
 	default "qemu-arm"
+
+config SYS_MALLOC_F_LEN
+	default 0x10000
+
+config SPL_SYS_MALLOC_F_LEN
+	default 0x200000
 
 endif
 
